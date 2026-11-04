@@ -56,63 +56,111 @@ a.x{text-decoration:none}.x{border:0;background:none;color:var(--bad);font:inher
 <button id="t-m" onclick="tab('m')">مواعيدي</button>
 <button id="t-s" style="display:none" onclick="tab('s')">الموظفون</button>
 </div>
-<main id="app"></main>
+<main id="app"><div class="empty">جارٍ التحميل…</div></main>
 </div>
-<script>
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getFirestore,collection,doc,writeBatch,onSnapshot,query,where} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {getAuth,signInWithEmailAndPassword,signOut,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+var cfg={apiKey:"AIzaSyDE68DUsWZ1cEZGQbgtH9H3OzL5fTMupoQ",authDomain:"helal-99dd6.firebaseapp.com",projectId:"helal-99dd6",storageBucket:"helal-99dd6.firebasestorage.app",messagingSenderId:"854886867887",appId:"1:854886867887:web:9b2f6d67a67c9869b7055a"};
+var WA='963965099513';
 var CL=[{n:'نسائية',e:'🤰'},{n:'داخلية',e:'🩺'},{n:'أطفال',e:'🧸'},{n:'عظمية',e:'🦴'},{n:'أنف وأذن وحنجرة',e:'👂'},{n:'تغذية',e:'🥗'}];
 var TIMES=['09:00','09:30','10:00','10:30','11:00','11:30','12:00','12:30','13:00','13:30'];
-var PIN='6632';
-var WA='963965099513'; // رقم واتساب المستوصف بالصيغة الدولية بدون + مثل 9639XXXXXXXX
-function waLink(b,toPatient){var msg=toPatient?('السلام عليكم '+b.name+'، تم تأكيد موعدك في مستوصف الهلال الأحمر العربي السوري – دير حافر\nالعيادة: '+b.clinic+'\nالموعد: '+fmt(b.date)+' الساعة '+b.time+'\nنرجو الحضور قبل الموعد بعشر دقائق.'):('حجز موعد – مستوصف الهلال الأحمر العربي السوري – دير حافر\nالاسم: '+b.name+'\nالجوال: '+b.phone+'\nالعيادة: '+b.clinic+'\nالموعد: '+fmt(b.date)+' الساعة '+b.time);var num=toPatient?(b.phone.charAt(0)==='0'?'963'+b.phone.slice(1):b.phone):WA;return 'https://wa.me/'+num+'?text='+encodeURIComponent(msg)}
-var S={tab:'p',step:1,phone:'',name:'',clinic:null,date:null,time:null,err:'',staff:false,fClinic:'',fDate:'',mPhone:'',mShown:false,done:null};
-var B=[];
-try{B=JSON.parse(localStorage.getItem('bk')||'[]')}catch(e){B=[]}
-function save(){try{localStorage.setItem('bk',JSON.stringify(B))}catch(e){}}
-function fix(s){return s.replace(/[٠-٩]/g,function(d){return '٠١٢٣٤٥٦٧٨٩'.indexOf(d)}).replace(/[۰-۹]/g,function(d){return '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)}).replace(/\D/g,'')}
+var S={tab:'p',step:1,phone:'',name:'',ci:null,date:null,time:null,err:'',busy:false,done:null,user:null,fClinic:'',fDate:'',dberr:''};
+var SL={},ALL=[],L=[],unsubB=null;
+try{L=JSON.parse(localStorage.getItem('bk2')||'[]')}catch(e){L=[]}
+function saveL(){try{localStorage.setItem('bk2',JSON.stringify(L))}catch(e){}}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+
+var db,auth;
+try{var app=initializeApp(cfg);db=getFirestore(app);auth=getAuth(app)}catch(e){S.dberr='تعذّر الاتصال بالخادم'}
+function sid(ci,d,t){return ci+'_'+d+'_'+t.replace(':','')}
 function iso(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function fix(s){return s.replace(/[٠-٩]/g,function(d){return '٠١٢٣٤٥٦٧٨٩'.indexOf(d)}).replace(/[۰-۹]/g,function(d){return '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)}).replace(/\D/g,'')}
 function days(){var a=[],d=new Date();for(var i=0;a.length<7&&i<20;i++){var x=new Date(d.getFullYear(),d.getMonth(),d.getDate()+i);if(x.getDay()!==5)a.push(x)}return a}
-function fmt(s,o){var p=s.split('-');return new Date(+p[0],p[1]-1,+p[2]).toLocaleDateString('ar-u-ca-gregory',o||{weekday:'long',day:'numeric',month:'long'})}
-function taken(c,d,t){return B.some(function(b){return b.clinic===c&&b.date===d&&b.time===t})}
+function fmt(s){var p=s.split('-');return new Date(+p[0],p[1]-1,+p[2]).toLocaleDateString('ar-u-ca-gregory',{weekday:'long',day:'numeric',month:'long'})}
 function past(d,t){if(d!==iso(new Date()))return false;var n=new Date(),h=t.split(':');return +h[0]*60+ +h[1]<=n.getHours()*60+n.getMinutes()}
-function tab(t){S.tab=t;S.err='';['p','m','s'].forEach(function(k){document.getElementById('t-'+k).classList.toggle('on',k===t)});if(t==='p'&&S.done){reset()}render()}
-function reset(){S.step=1;S.clinic=null;S.date=null;S.time=null;S.done=null;S.err=''}
+function cmp(a,b){return (a.date+a.time).localeCompare(b.date+b.time)}
+function waLink(b,kind){
+ var head='مستوصف الهلال الأحمر العربي السوري – دير حافر';
+ var msg,num=WA;
+ if(kind==='conf'){msg='السلام عليكم '+b.name+'، تم تأكيد موعدك في '+head+'\nالعيادة: '+b.clinic+'\nالموعد: '+fmt(b.date)+' الساعة '+b.time+'\nنرجو الحضور قبل الموعد بعشر دقائق.';num=b.phone.charAt(0)==='0'?'963'+b.phone.slice(1):b.phone}
+ else if(kind==='cancel'){msg='طلب إلغاء موعد – '+head+'\nالاسم: '+b.name+'\nالجوال: '+b.phone+'\nالعيادة: '+b.clinic+'\nالموعد: '+fmt(b.date)+' الساعة '+b.time}
+ else{msg='تأكيد حجز – '+head+'\nالاسم: '+b.name+'\nالجوال: '+b.phone+'\nالعيادة: '+b.clinic+'\nالموعد: '+fmt(b.date)+' الساعة '+b.time}
+ return 'https://wa.me/'+num+'?text='+encodeURIComponent(msg)}
+
 function render(){var h=S.tab==='p'?bookView():S.tab==='m'?mineView():staffView();document.getElementById('app').innerHTML=h}
+function tab(t){S.tab=t;S.err='';['p','m','s'].forEach(function(k){document.getElementById('t-'+k).classList.toggle('on',k===t)});if(t==='p'&&S.done)reset();render()}
+function reset(){S.step=1;S.ci=null;S.date=null;S.time=null;S.done=null;S.err=''}
+
 function bookView(){
- if(S.done){var b=S.done;return '<div class="card ok"><div class="big">✅</div><h2>تم تسجيل طلبك</h2><p><b>'+b.clinic+'</b><br>'+fmt(b.date)+' — '+b.time+'<br>'+b.name+'</p><p style="color:var(--mut)">لإتمام الحجز اضغط الزر التالي وأرسل الرسالة للمستوصف على واتساب، وسيصلك تأكيد من الموظف.</p><a class="btn" style="display:block;text-align:center;text-decoration:none" target="_blank" rel="noopener" href="'+waLink(b,false)+'">إرسال الحجز للمستوصف عبر واتساب</a><button class="btn alt" onclick="reset();render()">حجز موعد جديد</button></div>'}
+ if(S.dberr)return '<div class="card"><p class="err">'+esc(S.dberr)+'</p></div>';
+ if(S.done){var b=S.done;return '<div class="card ok"><div class="big">✅</div><h2>تم تسجيل طلبك</h2><p><b>'+esc(b.clinic)+'</b><br>'+fmt(b.date)+' — '+b.time+'<br>'+esc(b.name)+'</p><p style="color:var(--mut)">لإتمام الحجز اضغط الزر التالي وأرسل الرسالة للمستوصف على واتساب، وسيصلك تأكيد من الموظف.</p><a class="btn" style="display:block;text-align:center;text-decoration:none" target="_blank" rel="noopener" href="'+waLink(b,'req')+'">إرسال الحجز للمستوصف عبر واتساب</a><button class="btn alt" onclick="reset();render()">حجز موعد جديد</button></div>'}
  var h='<div class="steps">الخطوة '+S.step+' من 3</div>';
  if(S.step===1){
-  h+='<div class="card"><label for="nm">الاسم</label><input id="nm" value="'+S.name+'" placeholder="اسم المريض" autocomplete="name"><label for="ph">رقم الجوال</label><input id="ph" type="tel" inputmode="tel" value="'+S.phone+'" placeholder="05xxxxxxxx" autocomplete="tel"><p class="err">'+S.err+'</p><button class="btn" onclick="s1()">التالي: اختيار العيادة</button></div>'}
+  h+='<div class="card"><label for="nm">الاسم</label><input id="nm" value="'+esc(S.name)+'" placeholder="اسم المريض" autocomplete="name"><label for="ph">رقم الجوال</label><input id="ph" type="tel" inputmode="tel" value="'+esc(S.phone)+'" placeholder="09xxxxxxxx" autocomplete="tel"><p class="err">'+S.err+'</p><button class="btn" onclick="s1()">التالي: اختيار العيادة</button></div>'}
  if(S.step===2){
-  h+='<h2>اختر العيادة</h2><div class="grid">'+CL.map(function(c,i){return '<button class="clinic'+(S.clinic===c.n?' on':'')+'" onclick="pick('+i+')"><span class="e">'+c.e+'</span>'+c.n+'</button>'}).join('')+'</div><button class="btn alt" onclick="S.step=1;render()">رجوع</button>'}
+  h+='<h2>اختر العيادة</h2><div class="grid">'+CL.map(function(c,i){return '<button class="clinic'+(S.ci===i?' on':'')+'" onclick="pick('+i+')"><span class="e">'+c.e+'</span>'+c.n+'</button>'}).join('')+'</div><button class="btn alt" onclick="S.step=1;render()">رجوع</button>'}
  if(S.step===3){
   var ds=days();
-  h+='<h2>'+S.clinic+' — اختر اليوم والوقت</h2><div class="row">'+ds.map(function(d){var k=iso(d);return '<button class="chip'+(S.date===k?' on':'')+'" onclick="S.date=\''+k+'\';S.time=null;render()">'+d.toLocaleDateString('ar-u-ca-gregory',{weekday:'long'})+'<small>'+d.toLocaleDateString('ar-u-ca-gregory',{day:'numeric',month:'short'})+'</small></button>'}).join('')+'</div>';
-  if(S.date){h+='<h2>الأوقات المتاحة</h2><div class="slots">'+TIMES.map(function(t){var off=taken(S.clinic,S.date,t)||past(S.date,t);return '<button class="chip'+(S.time===t?' on':'')+'"'+(off?' disabled':'')+' onclick="S.time=\''+t+'\';render()">'+t+'</button>'}).join('')+'</div>'}
-  h+='<p class="err">'+S.err+'</p><button class="btn"'+(S.time?'':' disabled')+' onclick="confirmBk()">تأكيد الحجز</button><button class="btn alt" onclick="S.step=2;render()">رجوع</button>'}
+  h+='<h2>'+CL[S.ci].n+' — اختر اليوم والوقت</h2><div class="row">'+ds.map(function(d){var k=iso(d);return '<button class="chip'+(S.date===k?' on':'')+'" onclick="S.date=\''+k+'\';S.time=null;render()">'+d.toLocaleDateString('ar-u-ca-gregory',{weekday:'long'})+'<small>'+d.toLocaleDateString('ar-u-ca-gregory',{day:'numeric',month:'short'})+'</small></button>'}).join('')+'</div>';
+  if(S.date){h+='<h2>الأوقات المتاحة</h2><div class="slots">'+TIMES.map(function(t){var off=SL[sid(S.ci,S.date,t)]||past(S.date,t);return '<button class="chip'+(S.time===t?' on':'')+'"'+(off?' disabled':'')+' onclick="S.time=\''+t+'\';render()">'+t+'</button>'}).join('')+'</div>'}
+  h+='<p class="err">'+S.err+'</p><button class="btn"'+(S.time&&!S.busy?'':' disabled')+' onclick="confirmBk()">'+(S.busy?'جارٍ الحجز…':'تأكيد الحجز')+'</button><button class="btn alt" onclick="S.step=2;render()">رجوع</button>'}
  return h}
 function s1(){var n=document.getElementById('nm').value.trim(),p=fix(document.getElementById('ph').value);S.name=n;S.phone=p;
  if(!n){S.err='اكتب اسم المريض';return render()}
  if(p.length<9||p.length>12){S.err='رقم الجوال غير صحيح، اكتبه كاملًا';return render()}
  S.err='';S.step=2;render()}
-function pick(i){S.clinic=CL[i].n;S.date=null;S.time=null;S.step=3;render()}
-function confirmBk(){
- if(taken(S.clinic,S.date,S.time)){S.err='هذا الوقت حُجز للتو، اختر وقتًا آخر';S.time=null;return render()}
- var dup=B.some(function(b){return b.phone===S.phone&&b.clinic===S.clinic&&b.date===S.date});
+function pick(i){S.ci=i;S.date=null;S.time=null;S.step=3;render()}
+async function confirmBk(){
+ if(S.busy)return;
+ var dup=L.some(function(b){return b.phone===S.phone&&b.clinic===CL[S.ci].n&&b.date===S.date});
  if(dup){S.err='لديك حجز في نفس العيادة في هذا اليوم';return render()}
- var b={id:Date.now(),phone:S.phone,name:S.name,clinic:S.clinic,date:S.date,time:S.time};B.push(b);save();S.done=b;render()}
+ S.busy=true;S.err='';render();
+ var id=sid(S.ci,S.date,S.time);
+ var b={name:S.name,phone:S.phone,clinic:CL[S.ci].n,date:S.date,time:S.time,createdAt:Date.now()};
+ try{
+  var batch=writeBatch(db);
+  batch.set(doc(db,'slots',id),{clinic:b.clinic,date:b.date,time:b.time});
+  batch.set(doc(db,'bookings',id),b);
+  await Promise.race([batch.commit(),new Promise(function(_,rej){setTimeout(function(){rej({code:'timeout'})},15000)})]);
+  L.push(b);saveL();S.done=b;
+ }catch(e){
+  S.time=null;
+  S.err=(e&&e.code==='permission-denied')?'هذا الوقت حُجز للتو، اختر وقتًا آخر':'تعذّر الحجز، تأكد من الاتصال بالإنترنت وحاول مرة ثانية';
+ }
+ S.busy=false;render()}
 function mineView(){
- var h='<div class="card"><label for="mp">رقم الجوال</label><input id="mp" type="tel" inputmode="tel" value="'+S.mPhone+'" placeholder="05xxxxxxxx"><button class="btn" onclick="S.mPhone=fix(document.getElementById(\'mp\').value);S.mShown=true;render()">عرض مواعيدي</button></div>';
- if(S.mShown){var l=B.filter(function(b){return b.phone===S.mPhone}).sort(cmp);
-  h+='<div class="card">'+(l.length?l.map(function(b){return row(b,true)}).join(''):'<div class="empty">لا توجد مواعيد على هذا الرقم</div>')+'</div>'}
- return h}
-function cmp(a,b){return (a.date+a.time).localeCompare(b.date+b.time)}
-function row(b,showName){return '<div class="bk"><div><b>'+b.clinic+'</b><span>'+fmt(b.date)+' — '+b.time+(showName?'':' · '+b.name+' · <bdi>'+b.phone+'</bdi>')+'</span></div><div>'+(showName?'':'<a class="x" target="_blank" rel="noopener" href="'+waLink(b,true)+'">تأكيد واتساب</a>')+'<button class="x" onclick="cancel('+b.id+')">إلغاء</button></div></div>'}
-function cancel(id){if(!confirm('إلغاء هذا الموعد؟'))return;B=B.filter(function(b){return b.id!==id});save();render()}
+ var l=L.slice().sort(cmp);
+ return '<div class="card"><b>المواعيد المسجلة على هذا الجهاز</b>'+(l.length?l.map(function(b){return '<div class="bk"><div><b>'+esc(b.clinic)+'</b><span>'+fmt(b.date)+' — '+b.time+'</span></div><a class="x" target="_blank" rel="noopener" href="'+waLink(b,'cancel')+'">طلب إلغاء</a></div>'}).join(''):'<div class="empty">لا توجد مواعيد</div>')+'</div>'}
+
 function staffView(){
- if(!S.staff)return '<div class="card"><label for="pin">رمز الموظف</label><input id="pin" type="tel" inputmode="numeric" placeholder="اكتب الرمز"><p class="err">'+S.err+'</p><button class="btn" onclick="if(document.getElementById(\'pin\').value===PIN){S.staff=true;S.err=\'\'}else{S.err=\'الرمز غير صحيح\'};render()">دخول</button></div>';
- var l=B.filter(function(b){return(!S.fClinic||b.clinic===S.fClinic)&&(!S.fDate||b.date===S.fDate)}).sort(cmp);
+ if(!S.user)return '<div class="card"><label for="em">البريد الإلكتروني</label><input id="em" type="email" style="direction:ltr;text-align:right" autocomplete="username"><label for="pw">كلمة السر</label><input id="pw" type="password" style="direction:ltr;text-align:right" autocomplete="current-password"><p class="err">'+S.err+'</p><button class="btn" onclick="doLogin()">دخول</button></div>';
+ var l=ALL.filter(function(b){return(!S.fClinic||b.clinic===S.fClinic)&&(!S.fDate||b.date===S.fDate)}).sort(cmp);
  var opts='<option value="">كل العيادات</option>'+CL.map(function(c){return '<option'+(S.fClinic===c.n?' selected':'')+'>'+c.n+'</option>'}).join('');
- return '<div class="card"><div class="grid"><div><label for="fc">العيادة</label><select id="fc" onchange="S.fClinic=this.value;render()" style="width:100%;font:inherit;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)">'+opts+'</select></div><div><label for="fd">اليوم</label><input id="fd" type="date" value="'+S.fDate+'" onchange="S.fDate=this.value;render()"></div></div></div><div class="card"><b>'+l.length+' حجز</b>'+(l.length?l.map(function(b){return row(b,false)}).join(''):'<div class="empty">لا توجد حجوزات</div>')+'</div>'}
+ return '<div class="card"><div class="grid"><div><label for="fc">العيادة</label><select id="fc" onchange="S.fClinic=this.value;render()" style="width:100%;font:inherit;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)">'+opts+'</select></div><div><label for="fd">اليوم</label><input id="fd" type="date" value="'+esc(S.fDate)+'" onchange="S.fDate=this.value;render()"></div></div></div><div class="card"><b>'+l.length+' حجز</b><p class="err">'+S.err+'</p>'+(l.length?l.map(function(b){return '<div class="bk"><div><b>'+esc(b.clinic)+'</b><span>'+fmt(b.date)+' — '+b.time+' · '+esc(b.name)+' · <bdi>'+esc(b.phone)+'</bdi></span></div><div><a class="x" target="_blank" rel="noopener" href="'+waLink(b,'conf')+'">تأكيد واتساب</a><button class="x" onclick="cancelB(\''+esc(b.id)+'\')">إلغاء</button></div></div>'}).join(''):'<div class="empty">لا توجد حجوزات</div>')+'</div><button class="btn alt" onclick="doLogout()">تسجيل الخروج</button>'}
+async function doLogin(){
+ var e=document.getElementById('em').value.trim(),p=document.getElementById('pw').value;
+ try{await signInWithEmailAndPassword(auth,e,p);S.err=''}catch(x){S.err='البريد أو كلمة السر غير صحيحة';render()}}
+async function doLogout(){try{await signOut(auth)}catch(e){}}
+async function cancelB(id){
+ if(!confirm('إلغاء هذا الموعد؟'))return;
+ try{var b=writeBatch(db);b.delete(doc(db,'bookings',id));b.delete(doc(db,'slots',id));await b.commit()}catch(e){S.err='تعذّر الإلغاء';render()}}
+
+window.S=S;window.render=render;window.tab=tab;window.reset=reset;window.s1=s1;window.pick=pick;window.confirmBk=confirmBk;window.doLogin=doLogin;window.doLogout=doLogout;window.cancelB=cancelB;
+
+if(db){
+ onSnapshot(query(collection(db,'slots'),where('date','>=',iso(new Date()))),function(snap){
+  SL={};snap.forEach(function(d){SL[d.id]=true});
+  if(S.tab==='p'&&S.step===3&&!S.done&&!S.busy)render()
+ },function(){});
+ onAuthStateChanged(auth,function(u){
+  S.user=u;
+  if(unsubB){unsubB();unsubB=null}ALL=[];
+  if(u){unsubB=onSnapshot(collection(db,'bookings'),function(snap){ALL=snap.docs.map(function(d){var x=d.data();x.id=d.id;return x});if(S.tab==='s')render()},function(){S.err='لا تملك صلاحية عرض الحجوزات';if(S.tab==='s')render()})}
+  if(S.tab==='s')render()})
+}
 if(location.hash==='#staff')document.getElementById('t-s').style.display='';
 render();
 </script>
