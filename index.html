@@ -88,7 +88,7 @@ function docsOf(c){var r=[];DR.forEach(function(x,i){if(x.c===c)r.push(i)});retu
 var S={tab:'p',step:1,phone:'',name:'',cl:null,di:null,date:null,time:null,err:'',busy:false,done:null,user:null,fClinic:'',fDate:'',dberr:''};
 
 
-var SL={},ALL=[],L=[],unsubB=null;
+var SL={},SLok=false,ALL=[],L=[],unsubB=null;
 try{L=JSON.parse(localStorage.getItem('bk2')||'[]')}catch(e){L=[]}
 function saveL(){try{localStorage.setItem('bk2',JSON.stringify(L))}catch(e){}}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -102,6 +102,9 @@ function days(di){var a=[],d=new Date();for(var i=0;a.length<8&&i<28;i++){var x=
 function fmt(s){var p=s.split('-');return new Date(+p[0],p[1]-1,+p[2]).toLocaleDateString('ar-u-ca-gregory',{weekday:'long',day:'numeric',month:'long'})}
 function past(d,t){if(d!==iso(new Date()))return false;var n=new Date(),h=t.split(':');return +h[0]*60+ +h[1]<=n.getHours()*60+n.getMinutes()}
 function cmp(a,b){return (a.date+a.time).localeCompare(b.date+b.time)}
+function bid(b){var di=DR.findIndex(function(x){return x.n===b.doctor&&x.c===b.clinic});return di<0?null:sid(di,b.date,b.time)}
+function over(b){var d=new Date(),h=b.time.split(':'),m=+h[0]*60+ +h[1]+30,td=iso(d);return b.date<td||(b.date===td&&m<=d.getHours()*60+d.getMinutes())}
+function syncL(){var n=L.length;L=L.filter(function(b){if(over(b))return false;if(Date.now()-(b.createdAt||0)<120000)return true;var id=bid(b);return id?(!SLok||!!SL[id]):false});if(L.length!==n)saveL()}
 function waLink(b,kind){
  var head='مستوصف الهلال الأحمر العربي السوري – دير حافر';
  var msg,num=WA;
@@ -156,8 +159,8 @@ async function confirmBk(){
  }
  S.busy=false;render()}
 function mineView(){
- var l=L.slice().sort(cmp);
- return '<div class="card"><b>المواعيد المسجلة على هذا الجهاز</b>'+(l.length?l.map(function(b){return '<div class="bk"><div><b>'+esc(b.clinic)+(b.doctor?' — '+esc(b.doctor):'')+'</b><span>'+fmt(b.date)+' — '+b.time+'</span></div><a class="x" target="_blank" rel="noopener" href="'+waLink(b,'cancel')+'">طلب إلغاء</a></div>'}).join(''):'<div class="empty">لا توجد مواعيد</div>')+'</div>'}
+ var l=L.filter(function(b){return !over(b)}).sort(cmp);
+ return '<div class="card"><b>المواعيد المسجلة على هذا الجهاز</b><p class="sub">تختفي المواعيد تلقائيًا بعد انتهائها، أو عندما يلغيها المستوصف.</p>'+(l.length?l.map(function(b){return '<div class="bk"><div><b>'+esc(b.clinic)+(b.doctor?' — '+esc(b.doctor):'')+'</b><span>'+fmt(b.date)+' — '+b.time+'</span></div><a class="x" target="_blank" rel="noopener" href="'+waLink(b,'cancel')+'">طلب إلغاء</a></div>'}).join(''):'<div class="empty">لا توجد مواعيد</div>')+'</div>'}
 
 function staffView(){
  if(!S.user)return '<div class="card"><label for="em">البريد الإلكتروني</label><input id="em" type="email" style="direction:ltr;text-align:right" autocomplete="username"><label for="pw">كلمة السر</label><input id="pw" type="password" style="direction:ltr;text-align:right" autocomplete="current-password"><p class="err">'+S.err+'</p><button class="btn" onclick="doLogin()">دخول</button></div>';
@@ -176,8 +179,8 @@ window.S=S;window.render=render;window.tab=tab;window.reset=reset;window.s1=s1;w
 
 if(db){
  onSnapshot(query(collection(db,'slots'),where('date','>=',iso(new Date()))),function(snap){
-  SL={};snap.forEach(function(d){SL[d.id]=true});
-  if(S.tab==='p'&&S.step===3&&!S.done&&!S.busy)render()
+  SL={};snap.forEach(function(d){SL[d.id]=true});SLok=true;syncL();
+  if(S.tab==='p'&&S.step===3&&!S.done&&!S.busy||S.tab==='m')render()
  },function(){});
  onAuthStateChanged(auth,function(u){
   S.user=u;
