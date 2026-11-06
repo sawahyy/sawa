@@ -152,7 +152,7 @@ async function confirmBk(){
   L.push(b);saveL();S.done=b;
  }catch(e){
   S.time=null;
-  S.err=(e&&e.code==='permission-denied')?'هذا الوقت حُجز للتو، اختر وقتًا آخر':'تعذّر الحجز، تأكد من الاتصال بالإنترنت وحاول مرة ثانية';
+  S.err=(e&&e.code==='permission-denied')?(SL[id]?'هذا الوقت حُجز للتو، اختر وقتًا آخر':'تعذّر الحجز بسبب إعدادات الصلاحيات (Rules) في قاعدة البيانات'):'تعذّر الحجز، تأكد من الاتصال بالإنترنت وحاول مرة ثانية';
  }
  S.busy=false;render()}
 function mineView(){
